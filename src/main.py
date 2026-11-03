@@ -9,8 +9,23 @@ from typing import Dict, List, Tuple
 from src.recommender import load_songs, recommend_songs
 
 PROFILES: Dict[str, Dict] = {
-    "Pop / Happy (starter profile)": {"genre": "pop", "mood": "happy", "energy": 0.8},
+    "High-Energy Pop": {"genre": "pop", "mood": "happy", "energy": 0.90, "acousticness": 0.10},
     "Chill Lofi": {"genre": "lofi", "mood": "chill", "energy": 0.40, "acousticness": 0.75},
+    "Deep Intense Rock": {"genre": "rock", "mood": "intense", "energy": 0.92, "acousticness": 0.10},
+}
+
+# Edge cases designed to trick the scoring logic.
+ADVERSARIAL_PROFILES: Dict[str, Dict] = {
+    # "sad" is not a mood label in the catalog (it has "sorrowful" and "melancholy").
+    "Conflict: High Energy + Sad": {"genre": "blues", "mood": "sad", "energy": 0.90},
+    # Genre is heavy: does a genre match beat a total mismatch on everything else?
+    "Conflict: Metal + Chill + Quiet": {
+        "genre": "metal", "mood": "chill", "energy": 0.20, "acousticness": 0.90,
+    },
+    # Genre and mood that exist nowhere in the catalog: only numbers can score.
+    "Unknown Genre (k-pop / happy)": {"genre": "k-pop", "mood": "happy", "energy": 0.80},
+    # Maxed-out numbers: very loud and very acoustic at once.
+    "Extreme: Energy 1.0 + Acoustic 1.0": {"energy": 1.0, "acousticness": 1.0},
 }
 
 WIDTH = 64
@@ -34,7 +49,7 @@ def main() -> None:
     songs = load_songs("data/songs.csv")
     print(f"Loaded songs: {len(songs)}\n")
 
-    for name, user_prefs in PROFILES.items():
+    for name, user_prefs in {**PROFILES, **ADVERSARIAL_PROFILES}.items():
         recommendations = recommend_songs(user_prefs, songs, k=5)
         print(format_recommendations(name, user_prefs, recommendations))
 
