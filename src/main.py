@@ -1,33 +1,42 @@
 """
 Command line runner for the Music Recommender Simulation.
 
-This file helps you quickly run and test your recommender.
-
-You will implement the functions in recommender.py:
-- load_songs
-- score_song
-- recommend_songs
+Run from the project root:  python -m src.main
 """
 
-from recommender import load_songs, recommend_songs
+from typing import Dict, List, Tuple
+
+from src.recommender import load_songs, recommend_songs
+
+PROFILES: Dict[str, Dict] = {
+    "Pop / Happy (starter profile)": {"genre": "pop", "mood": "happy", "energy": 0.8},
+    "Chill Lofi": {"genre": "lofi", "mood": "chill", "energy": 0.40, "acousticness": 0.75},
+}
+
+WIDTH = 64
+
+
+def format_recommendations(
+    name: str, user_prefs: Dict, recommendations: List[Tuple[Dict, float, str]]
+) -> str:
+    prefs = ", ".join(f"{key}={value}" for key, value in user_prefs.items())
+    lines = ["=" * WIDTH, f"Profile: {name}", f"  ({prefs})", "=" * WIDTH]
+    for rank, (song, score, explanation) in enumerate(recommendations, start=1):
+        lines.append(f"{rank}. {song['title']} by {song['artist']}")
+        lines.append(f"   Score: {score:.2f}")
+        lines.append("   Why:")
+        lines.extend(f"     - {reason}" for reason in explanation.split("; "))
+        lines.append("")
+    return "\n".join(lines)
 
 
 def main() -> None:
-    songs = load_songs("data/songs.csv") 
+    songs = load_songs("data/songs.csv")
+    print(f"Loaded songs: {len(songs)}\n")
 
-    # Starter example profile
-    user_prefs = {"genre": "pop", "mood": "happy", "energy": 0.8}
-
-    recommendations = recommend_songs(user_prefs, songs, k=5)
-
-    print("\nTop recommendations:\n")
-    for rec in recommendations:
-        # You decide the structure of each returned item.
-        # A common pattern is: (song, score, explanation)
-        song, score, explanation = rec
-        print(f"{song['title']} - Score: {score:.2f}")
-        print(f"Because: {explanation}")
-        print()
+    for name, user_prefs in PROFILES.items():
+        recommendations = recommend_songs(user_prefs, songs, k=5)
+        print(format_recommendations(name, user_prefs, recommendations))
 
 
 if __name__ == "__main__":

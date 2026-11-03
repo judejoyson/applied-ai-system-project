@@ -21,16 +21,34 @@ Prompts:
 
 ## 3. How the Model Works  
 
-Explain your scoring approach in simple language.  
+The recommender works like a judge scoring contestants. The listener tells it their
+favorite genre, favorite mood, how energetic they want the music to be, and
+(optionally) how acoustic they want it. The system then looks at every song in the
+catalog, one at a time, and awards points for how well the song fits:
 
-Prompts:  
+- **Genre:** 2 points if the song's genre is exactly the listener's favorite, 0 if not.
+- **Mood:** 1 point if the song's mood is exactly the listener's favorite, 0 if not.
+- **Energy:** up to 1 point, depending on how close the song's energy is to the
+  listener's target. A perfect match earns the full point, and the further away the
+  song is, the fewer points it gets.
+- **Acoustic feel:** up to 1 point, awarded the same way as energy.
 
-- What features of each song are used (genre, energy, mood, etc.)  
-- What user preferences are considered  
-- How does the model turn those into a score  
-- What changes did you make from the starter logic  
+Genre counts the most because it is the strongest signal of taste. Energy and acoustic
+feel are scored by closeness rather than all-or-nothing, so a song that just misses
+still beats one that is far off.
 
-Avoid code here. Pretend you are explaining the idea to a friend who does not program.
+Once every song has a total, the system sorts them from highest to lowest and shows
+the top few. Each result also lists the reasons it earned its points, such as "genre
+match (+2.0)", so the listener can see why a song was picked rather than just trusting
+a number.
+
+Changes from the starter: the starter only returned the first songs in the file with a
+placeholder explanation. This version loads the catalog from a CSV, scores each song
+with the rules above, ranks them, and explains each result. It is a command-line
+program (run with `python -m src.main`), with no web or app interface.
+
+Things the scoring ignores: tempo, valence (how positive a song feels) and
+danceability are in the data but are not used yet.
 
 ---
 
