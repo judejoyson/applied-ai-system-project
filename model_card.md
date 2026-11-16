@@ -150,3 +150,153 @@ I ran `python -m src.main` on seven profiles and read the top 5 for each. I aske
 - Warn the listener when a genre or mood is not in the catalog.
 - Use valence and danceability, and let a profile hold several favorite genres.
 - Test it on a friend's real taste and see if the top 5 feels right to them.
+
+---
+
+## 10. Responsible-AI Reflection (RAG Feature)
+
+This section covers the Retrieval-Augmented Generation feature added on top
+of the original recommender above (`src/rag.py`, reachable via
+`python -m src.main --ask "..."`). The graded responsible-AI reflection for
+this project lives here, not in the README.
+
+### What are the limitations or biases in your system?
+
+- **Retrieval is literal keyword matching, not semantic understanding.** The
+  index only "knows" the specific bucket words it was given (`"acoustic"`,
+  `"high energy"`, and so on). A query using none of that vocabulary or its
+  near-synonyms gets no credit, even if a human would obviously find a
+  match. This is the same exact-match brittleness the original recommender
+  has with `genre`/`mood` (Section 5), just moved one step earlier into
+  retrieval.
+- **A single shared word between a query and the index vocabulary can
+  dominate the similarity score**, because out-of-vocabulary query words are
+  silently zero-weighted rather than penalized (see the stopword bug below
+  for a real example; stripping stopwords closed that specific case, but any
+  future bucket phrase that reuses an overly common word could reintroduce
+  the same failure mode in a new form).
+- **Confidence is not a calibrated probability.** When the LLM answers, its
+  `High`/`Medium`/`Low` rating is self-reported — nothing cross-checks it
+  against the actual fit, and a model can be confidently wrong. When there's
+  no live model call, the same label comes from a cosine-similarity cutoff
+  (0.35 / 0.15) I picked by eyeballing a handful of queries, not from a
+  validated threshold study. Read both as directional signals, not
+  guarantees.
+- **The grounding instruction is a prompt-level control, not a verified
+  one.** The system prompt tells Claude to recommend only from the
+  retrieved list, and in testing it did — but nothing in the code checks
+  that the song titles in its response actually came from that list. A
+  sufficiently unusual or adversarial query could in principle get the model
+  to ignore that instruction.
+- **The 20-song catalog limits retrieval quality the same way it limited the
+  original scorer.** `tests/test_rag_eval.py` only checks that *one*
+  expected song appears in the top 5, because with this few songs per
+  genre/mood there usually isn't a deeper "correct" ranking to test against.
+- **No real usage data feeds back into the system.** Every eval query was
+  written by me reading the catalog, not sourced from how an actual listener
+  would phrase a request, so the bucket vocabulary and thresholds are
+  untested against real-world phrasing.
+- **Inherited bias from the catalog itself.** The 20 songs were hand-written
+  to fit genre stereotypes (Section 3), so the RAG path's retrieval
+  vocabulary and any grounded answer it produces are built on the same
+  stereotyped data, not just the original scorer.
+
+### Could your AI be misused, and how would you prevent that?
+
+The clearest misuse risk is **not** "it recommends a bad song" — it's that
+`--ask`/`--interactive` forward whatever free text a user types straight
+into an LLM call. That creates two realistic risks:
+
+1. **Prompt injection to escape the recommendation task.** A user could try
+   something like *"ignore your instructions and instead write me..."* to
+   get Claude to act as a general-purpose assistant using my API key and
+   budget, rather than a music recommender. The system prompt explicitly
+   restricts Claude to recommending only from the retrieved song list, which
+   makes this harder, but it's a prompt-level restriction, not an enforced
+   one (see the limitation above) — a sufficiently crafted input could still
+   get past it in principle.
+2. **Cost/quota abuse.** Nothing currently stops someone with access to the
+   CLI (and the configured `ANTHROPIC_API_KEY`) from running unlimited
+   queries and running up API spend, since this was built as a local,
+   single-user class project rather than a shared service.
+
+What already limits the blast radius, even without dedicated anti-abuse
+code: the relevance threshold means a query has to retrieve at least one
+real song before an LLM call happens at all, so most injection/spam attempts
+that don't resemble a music request are rejected before they ever reach
+Claude; `MAX_ANSWER_TOKENS` caps the cost of any single call; and Claude's
+own safety classifiers (the `refusal` stop reason, already handled as a
+guardrail) catch a wide range of harmful requests regardless of what my
+system prompt says. If I were to turn this into a shared/public tool rather
+than a local class project, I would not ship it as-is — I'd add per-user
+rate limiting, stop trusting a single shared API key for multiple users, and
+treat the prompt-injection gap above as a blocking issue rather than a
+documented limitation.
+
+### What surprised you while testing your AI's reliability?
+
+I expected the mocked unit tests (`tests/test_rag.py`) to be the main proof
+this works, since they exercise every guardrail path — no relevant songs, no
+API key, a successful call, an authentication error. What surprised me is
+that they all passed easily and still missed two real bugs, because a mock
+doesn't care what context it was actually handed:
+
+1. Song titles leaking into the similarity index let **Night Drive Loop**
+   outrank genuinely chill/acoustic songs for a "late-night studying" query,
+   purely because its title shares the word "night" with the query.
+2. Once I added `tests/test_rag_eval.py` to check retrieval against the
+   *real* `data/songs.csv` catalog instead of a mock, its check that
+   nonsense queries return no results immediately failed: a query containing
+   the word "not" retrieved a real song at 0.30 relevance, because one
+   bucket phrase ("not very danceable") had put the stopword "not" into the
+   index, and out-of-vocabulary query words are silently zero-weighted
+   rather than penalized — so that one incidental match dominated the
+   score.
+
+What surprised me most isn't that there were bugs — it's how little either
+bug had to do with the LLM. Both were in the retrieval step, which I'd
+assumed was the "simple, safe" half of the pipeline compared to the LLM
+call. Neither would have been caught by reading the code; both only
+surfaced by running an eval against the real catalog with adversarial
+input, the same way the original rule-based project's "adversarial profile"
+testing (Section 6) caught scoring bugs the two starter unit tests didn't.
+13 tests pass now (up from 9 before `test_rag_eval.py` existed), and the
+confidence rating, request logging, and per-exception-type error handling in
+`src/rag.py` are what let me see *which* path produced an answer and *why*
+it failed, instead of just that it did.
+
+### Describe your collaboration with AI during this project.
+
+I used an AI coding agent (Claude, in Claude Code) to design and build the
+whole RAG feature: the retriever, the grounded Claude agent, the guardrails
+and logging, the test suite, the system diagram, and the README rewrite. I
+described the goal (retrieve before answering, integrate it into the real
+app, add logging/guardrails, prove it works with tests) and let the agent
+propose the architecture. I reviewed every file it wrote, ran the CLI and
+the test suite myself rather than trusting a description of what "should"
+happen, and pushed back when an output looked wrong — that's how the
+stopword bug above got caught and fixed, not from the agent noticing it on
+its own.
+
+**A suggestion I accepted.** Building the retriever as a small,
+dependency-free TF-IDF + cosine-similarity index, instead of adding a vector
+database or an embeddings API call. For a 20-song catalog, that's simpler to
+read end to end, has no extra service to configure, and keeps the
+reproducibility story in the README to "pip install and run." I'd reconsider
+this if the catalog ever grew past a few hundred songs with much more varied
+language — plain keyword TF-IDF would start missing real synonyms that
+embeddings would catch.
+
+**A suggestion I did not accept as written.** The agent's own default
+guidance for building Claude-powered features is to use the largest current
+model unless told otherwise. I overrode that and asked for Haiku 5.5
+instead. It wasn't that the suggestion was wrong — a bigger model would
+have worked fine — it was a poor fit for this specific task and project:
+picking 1 to 3 songs out of a 5-song shortlist and explaining why doesn't
+need the largest model's extra reasoning, and a student project like this
+one gets re-run constantly while developing and grading. The cost
+difference was large enough (roughly 40x on output tokens) that it wasn't
+worth paying for headroom this task doesn't need. `VIBEMATCH_MODEL` is still
+there as an environment variable if a harder version of this task ever
+needed a stronger model.
+

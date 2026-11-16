@@ -1,0 +1,69 @@
+%% VibeMatch RAG System Diagram
+%% Components: CLI entry point, retriever, grounded-generation agent,
+%% guardrails/logging, and where humans + automated tests check the output.
+flowchart TD
+
+    subgraph INPUT ["INPUT"]
+        U["User runs:\npython -m src.main --ask (a question)\nor --interactive\nor the built-in demo profiles/queries"]
+    end
+
+    subgraph DATA ["DATA"]
+        CSV[("data/songs.csv\n20 songs x 10 attributes")]
+    end
+
+    U -->|"free-text question"| RETRIEVE
+    U -->|"structured profile\n(genre, mood, energy, acousticness)"| SCORER
+    CSV -->|"load_songs()"| RETRIEVE
+    CSV -->|"load_songs()"| SCORER
+
+    subgraph RAG ["RAG PIPELINE  (src/rag.py)"]
+        direction TB
+        RETRIEVE["Retriever\nTF-IDF + cosine similarity\nover song metadata text"]
+        FILTER{"Any song above\nrelevance threshold\n(0.05)?"}
+        CONTEXT["Build grounding context:\ntop-k retrieved songs\n+ their attributes"]
+        KEYCHECK{"ANTHROPIC_API_KEY set?"}
+        AGENT["Agent: Claude (claude-haiku-5-5)\nsystem prompt restricts it to\nrecommend ONLY from retrieved songs\n+ self-rate confidence High/Medium/Low"]
+        ERRCHECK{"API call ok?\n(auth / rate limit /\nconnection / refusal)"}
+        FALLBACK["Guardrail fallback:\nlist retrieved songs directly,\nconfidence estimated from\nretrieval score instead"]
+        LOG[("logs/rag.log\nquery, retrieved titles,\nLLM vs fallback, confidence, errors")]
+
+        RETRIEVE --> FILTER
+        FILTER -->|no| FALLBACK
+        FILTER -->|yes| CONTEXT
+        CONTEXT --> KEYCHECK
+        KEYCHECK -->|no| FALLBACK
+        KEYCHECK -->|yes| AGENT
+        AGENT --> ERRCHECK
+        ERRCHECK -->|no| FALLBACK
+        ERRCHECK -->|yes| GROUNDED["Grounded natural-language answer\n(cites specific retrieved songs)"]
+
+        RETRIEVE -.-> LOG
+        AGENT -.-> LOG
+        FALLBACK -.-> LOG
+        ERRCHECK -.-> LOG
+    end
+
+    subgraph RULES ["RULE-BASED RECOMMENDER  (src/recommender.py)"]
+        SCORER["score_song() / recommend_songs()\ngenre +2.0, mood +1.0,\nenergy & acousticness closeness"]
+    end
+
+    subgraph OUTPUT ["OUTPUT"]
+        OUT1["Top-k recommendations\nwith a point-by-point why explanation"]
+        OUT2["Grounded RAG answer\nor fallback song list"]
+    end
+
+    SCORER --> OUT1
+    GROUNDED --> OUT2
+    FALLBACK --> OUT2
+
+    subgraph CHECK ["HUMAN + AUTOMATED CHECKS"]
+        direction TB
+        TESTS["tests/test_rag.py (mocked LLM, guardrails)\ntests/test_rag_eval.py (precision eval\non real data/songs.csv)\ntests/test_recommender.py\n13 tests, no API key/network needed"]
+        HUMAN["Developer reads logs/rag.log and\nconsole output, judges whether the\ngrounded answer actually fits the\nretrieved songs (model_card.md eval)"]
+    end
+
+    OUT1 -.->|reviewed in| HUMAN
+    OUT2 -.->|reviewed in| HUMAN
+    LOG -.->|reviewed in| HUMAN
+    RAG -.->|verified by| TESTS
+    RULES -.->|verified by| TESTS
